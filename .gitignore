@@ -52,7 +52,3 @@ media_store/
 
 # --- Tooling state ---
 .claude/
-
-alembic/
-DEPLOY.md
-docker-compose.yml

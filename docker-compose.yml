@@ -1,0 +1,25 @@
+# Local PostgreSQL for development. Start with: docker compose up -d
+#
+# The host port defaults to 55432: 5432 is commonly already taken by another
+# PostgreSQL on the machine. Override with POSTGRES_PORT to change it.
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: pdd_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pdd
+      POSTGRES_PASSWORD: pdd
+      POSTGRES_DB: pdd
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - pdd_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdd -d pdd"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pdd_pgdata:
