@@ -1,0 +1,28 @@
+# Version floors, not pins: the development machine already carries newer
+# builds of these libraries and cannot reach PyPI through the proxy.
+
+# --- Web framework ---
+fastapi>=0.115
+uvicorn[standard]>=0.34
+python-multipart>=0.0.20
+
+# --- Database ---
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30
+alembic>=1.14
+greenlet>=3.0
+
+# --- Configuration & validation ---
+pydantic>=2.10
+pydantic-settings>=2.7
+email-validator>=2.2
+
+# --- Security ---
+# passlib is deliberately absent: 1.7.4 breaks against bcrypt >= 5.
+pyjwt>=2.10
+bcrypt>=4.0
+
+# --- Development / tests ---
+pytest>=8.3
+pytest-asyncio>=0.25
+httpx>=0.28

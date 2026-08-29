@@ -1,0 +1,58 @@
+# --- Secrets ---
+# .env holds the database password and the JWT signing key. The example file
+# is committed so a new environment knows which keys to set.
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---
+.venv/
+venv/
+ENV/
+
+# --- Vendored dependencies ---
+# Test packages were installed here because this machine cannot reach PyPI
+# through its proxy; on a normal machine `pip install -r requirements.txt`
+# covers them.
+.pydeps/
+
+# --- Test and type-checker caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Media ---
+# The video store lives beside this repository, not inside it: 823 files and
+# ~570 MB would make every clone heavy. Production serves video from the
+# origin platforms (MEDIA_SERVE_LOCAL=false), so the server needs none of it.
+media_store/
+
+# --- Local database dumps ---
+*.dump
+*.sql.gz
+
+# --- Editors and OS ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- Tooling state ---
+.claude/
+
+alembic/
+DEPLOY.md
+docker-compose.yml
