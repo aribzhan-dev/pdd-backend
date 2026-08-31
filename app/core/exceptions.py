@@ -38,6 +38,13 @@ class AccountInactiveError(AppError):
     message = "Аккаунт неактивен. Обратитесь к администратору"
 
 
+class SessionSupersededError(AppError):
+    """The account signed in somewhere else, so this device is signed out."""
+
+    status_code = 401
+    message = "Вход выполнен на другом устройстве. Войдите заново"
+
+
 class PermissionDeniedError(AppError):
     """The caller's role does not allow this action."""
 

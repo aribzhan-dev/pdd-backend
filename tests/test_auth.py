@@ -190,3 +190,85 @@ async def test_access_token_is_not_accepted_as_a_refresh_token(
 
     # Assert
     assert response.status_code == 401
+
+
+async def test_signing_in_again_ends_the_earlier_session(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """One account, one device: the newer login wins."""
+    # Arrange — a student signed in on the first device
+    await create_student(db)
+    first_device = await sign_in(client, "060422501511")
+    assert (await client.get("/api/v1/auth/me", headers=first_device)).status_code == 200
+
+    # Act — the same account signs in somewhere else
+    second_device = await sign_in(client, "060422501511")
+
+    # Assert
+    stale = await client.get("/api/v1/auth/me", headers=first_device)
+    assert stale.status_code == 401
+    assert "другом устройстве" in stale.json()["error"]
+    assert (await client.get("/api/v1/auth/me", headers=second_device)).status_code == 200
+
+
+async def test_a_replaced_device_cannot_refresh_its_way_back(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    await create_student(db)
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"iin": "060422501511", "password": TEST_PASSWORD},
+    )
+    old_refresh = login.json()["tokens"]["refresh_token"]
+
+    # Act — a second login supersedes the first, then the first tries to renew
+    await sign_in(client, "060422501511")
+    response = await client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": old_refresh}
+    )
+
+    # Assert — otherwise refreshing would be a way around the device limit
+    assert response.status_code == 401
+    assert "другом устройстве" in response.json()["error"]
+
+
+async def test_the_current_device_can_still_refresh(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    await create_student(db)
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"iin": "060422501511", "password": TEST_PASSWORD},
+    )
+
+    # Act
+    refreshed = await client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": login.json()["tokens"]["refresh_token"]},
+    )
+
+    # Assert
+    assert refreshed.status_code == 200
+    me = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {refreshed.json()['access_token']}"},
+    )
+    assert me.status_code == 200
+
+
+async def test_two_different_students_do_not_evict_each_other(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    await create_student(db, "060422501511")
+    await create_student(db, "770000000007")
+
+    # Act
+    first = await sign_in(client, "060422501511")
+    second = await sign_in(client, "770000000007")
+
+    # Assert — the limit is per account, not global
+    assert (await client.get("/api/v1/auth/me", headers=first)).status_code == 200
+    assert (await client.get("/api/v1/auth/me", headers=second)).status_code == 200

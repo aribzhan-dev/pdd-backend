@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     APP_NAME: str = "PDD API"
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
+    #: Serve /docs, /redoc and /openapi.json. Handy in development and for
+    #: handing the API to another developer; off in production by default.
+    ENABLE_DOCS: bool = True
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 
     # --- Database (async DSN, asyncpg driver) ---

@@ -26,6 +26,15 @@ async def start_exam(client: AsyncClient, headers: dict[str, str]) -> dict:
     return response.json()
 
 
+async def start_training(client: AsyncClient, headers: dict[str, str]) -> dict:
+    """Begin a training run — the mode that gives feedback as you go."""
+    response = await client.post(
+        "/api/v1/quiz/sessions", headers=headers, json={"mode": "training"}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 async def answer_at(
     client: AsyncClient, headers: dict[str, str], session: dict, position: int, *, correct: bool
 ) -> dict:
@@ -85,7 +94,7 @@ async def test_answering_reveals_the_verdict_and_explanation(
     await create_content(db)
     await create_student(db, STUDENT_IIN)
     headers = await sign_in(client, STUDENT_IIN)
-    session = await start_exam(client, headers)
+    session = await start_training(client, headers)
 
     # Act
     wrong = await answer_at(client, headers, session, 0, correct=False)
@@ -104,7 +113,7 @@ async def test_the_navigation_strip_marks_right_and_wrong_answers(
     await create_content(db)
     await create_student(db, STUDENT_IIN)
     headers = await sign_in(client, STUDENT_IIN)
-    session = await start_exam(client, headers)
+    session = await start_training(client, headers)
 
     # Act
     await answer_at(client, headers, session, 0, correct=True)
@@ -127,7 +136,7 @@ async def test_a_reload_restores_every_answer_and_the_current_position(
     await create_content(db)
     await create_student(db, STUDENT_IIN)
     headers = await sign_in(client, STUDENT_IIN)
-    session = await start_exam(client, headers)
+    session = await start_training(client, headers)
     for position in range(3):
         await answer_at(client, headers, session, position, correct=position != 1)
 
@@ -558,3 +567,100 @@ async def test_media_urls_escape_percent_signs_in_file_names(
     # Assert
     url = session["questions"][0]["situation_video"]["url"]
     assert url == "/media/media/videos/explanations/ru/IMG_%25D0%25B2%25D0%25BE.MOV"
+
+
+async def test_the_exam_says_nothing_about_right_or_wrong_while_it_runs(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The exam mirrors the real one: answer, move on, find out at the end."""
+    # Arrange
+    await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_exam(client, headers)
+
+    # Act
+    feedback = await answer_at(client, headers, session, 0, correct=False)
+
+    # Assert — the answer is recorded, but nothing is given away
+    assert feedback["reveals_answer"] is False
+    assert feedback["is_correct"] is None
+    assert feedback["correct_answer_id"] is None
+    assert feedback["explanation"] is None
+    assert feedback["explanation_video_url"] is None
+    assert feedback["answered_count"] == 1
+
+
+async def test_the_exam_strip_shows_answered_but_not_correctness(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_exam(client, headers)
+    await answer_at(client, headers, session, 0, correct=True)
+    await answer_at(client, headers, session, 1, correct=False)
+
+    # Act
+    reread = (
+        await client.get(f"/api/v1/quiz/sessions/{session['id']}", headers=headers)
+    ).json()
+
+    # Assert — the chips may only say "answered", never green or red
+    assert reread["reveals_answers"] is False
+    assert reread["items"][0]["is_answered"] is True
+    assert reread["items"][0]["is_correct"] is None
+    assert reread["items"][1]["is_correct"] is None
+    assert all(q["explanation"] is None for q in reread["questions"])
+    assert all(
+        a["is_correct"] is None for q in reread["questions"] for a in q["answers"]
+    )
+
+
+async def test_finishing_the_exam_reveals_everything(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_exam(client, headers)
+    for position in range(3):
+        await answer_at(client, headers, session, position, correct=position != 1)
+
+    # Act
+    result = (
+        await client.post(
+            f"/api/v1/quiz/sessions/{session['id']}/finish", headers=headers
+        )
+    ).json()
+    reread = (
+        await client.get(f"/api/v1/quiz/sessions/{session['id']}", headers=headers)
+    ).json()
+
+    # Assert — the score card is complete and the review is now readable
+    assert result["correct_count"] == 2
+    assert len([e for e in result["review"] if e["is_answered"]]) == 3
+    assert reread["reveals_answers"] is True
+    assert reread["items"][0]["is_correct"] is True
+    assert reread["items"][1]["is_correct"] is False
+
+
+async def test_training_mode_gives_feedback_straight_away(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_training(client, headers)
+
+    # Act
+    feedback = await answer_at(client, headers, session, 0, correct=True)
+
+    # Assert
+    assert feedback["reveals_answer"] is True
+    assert feedback["is_correct"] is True
+    assert feedback["correct_answer_id"] is not None
+    assert feedback["explanation"] is not None

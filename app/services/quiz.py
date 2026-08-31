@@ -173,6 +173,7 @@ class QuizService:
         item.answer_id = chosen.id
         item.is_correct = chosen.is_correct
         item.answered_at = utc_now()
+        reveals = session.mode.reveals_answers_immediately
 
         if chosen.is_correct:
             await self.quiz.clear_mistake(user_id, question_id)
@@ -188,14 +189,17 @@ class QuizService:
         )
         video = media_url(explanation_video)
         return AnswerResult(
-            is_correct=chosen.is_correct,
-            correct_answer_id=correct.id,
-            explanation=localize(
-                question.explanation_ru, question.explanation_kz, language
+            is_correct=chosen.is_correct if reveals else None,
+            correct_answer_id=correct.id if reveals else None,
+            explanation=(
+                localize(question.explanation_ru, question.explanation_kz, language)
+                if reveals
+                else None
             ),
-            explanation_video_url=video.url if video else None,
+            explanation_video_url=video.url if (reveals and video) else None,
             can_finish=session.can_finish,
             answered_count=session.answered_count,
+            reveals_answer=reveals,
         )
 
     # --- Finishing ----------------------------------------------------------
@@ -286,6 +290,12 @@ class QuizService:
             else MODE_TITLES.get(session.mode, session.mode.label)
         )
 
+        # A finished exam may be reviewed in full; a running one may not.
+        reveals = (
+            session.mode.reveals_answers_immediately
+            or session.status is QuizStatus.FINISHED
+        )
+
         return SessionRead(
             id=session.id,
             mode=to_labeled(session.mode),
@@ -302,10 +312,13 @@ class QuizService:
             time_limit_seconds=session.time_limit_seconds,
             seconds_left=session.seconds_left,
             current_position=_resume_position(session),
-            items=[_to_item_state(item) for item in session.items],
+            reveals_answers=reveals,
+            items=[_to_item_state(item, reveals) for item in session.items],
             questions=[
                 serialize_question(
-                    item.question, session.language, reveal_answers=item.is_answered
+                    item.question,
+                    session.language,
+                    reveal_answers=item.is_answered and reveals,
                 )
                 for item in session.items
             ],
@@ -328,13 +341,17 @@ def _resume_position(session: QuizSession) -> int:
     return max(0, session.total_questions - 1)
 
 
-def _to_item_state(item: QuizItem) -> ItemState:
-    """One chip in the navigation strip: answered, and right or wrong."""
+def _to_item_state(item: QuizItem, reveals: bool) -> ItemState:
+    """One chip in the navigation strip.
+
+    `is_correct` stays null while an exam is running, so the strip can only
+    show whether a question was answered — never whether it was right.
+    """
     return ItemState(
         position=item.position,
         question_id=item.question_id,
         is_answered=item.is_answered,
-        is_correct=item.is_correct if item.is_answered else None,
+        is_correct=item.is_correct if (item.is_answered and reveals) else None,
         answer_id=item.answer_id,
     )
 

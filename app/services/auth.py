@@ -15,12 +15,14 @@ from app.core.exceptions import (
     AccessExpiredError,
     AccountInactiveError,
     InvalidCredentialsError,
+    SessionSupersededError,
 )
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
     hash_password,
+    new_session_id,
     verify_password,
 )
 from app.enums.role import UserRole
@@ -55,6 +57,9 @@ class AuthService:
             raise InvalidCredentialsError
         self._assert_may_sign_in(user)
 
+        # A fresh session id invalidates whatever was issued to another
+        # device: one account signs in on one device at a time.
+        user.session_id = new_session_id()
         user.last_login_at = utc_now()
         await self.session.commit()
         return LoginResponse(tokens=self._issue_tokens(user), user=build_profile(user))
@@ -69,6 +74,9 @@ class AuthService:
         user = await self.users.get_by_id(int(payload["sub"]))
         if user is None:
             raise InvalidCredentialsError
+        # Refreshing must not resurrect a device that a newer login replaced.
+        if payload.get("sid") != user.session_id:
+            raise SessionSupersededError
         self._assert_may_sign_in(user)
         return self._issue_tokens(user)
 
@@ -102,9 +110,10 @@ class AuthService:
     @staticmethod
     def _issue_tokens(user: User) -> TokenPair:
         """Mint an access/refresh pair for an already-authorised user."""
+        session_id = user.session_id or ""
         return TokenPair(
-            access_token=create_access_token(user.id, user.role.value),
-            refresh_token=create_refresh_token(user.id, user.role.value),
+            access_token=create_access_token(user.id, user.role.value, session_id),
+            refresh_token=create_refresh_token(user.id, user.role.value, session_id),
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )
 

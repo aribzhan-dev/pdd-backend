@@ -45,14 +45,20 @@ class ItemState(BaseModel):
 
 
 class AnswerResult(BaseModel):
-    """Immediate feedback after answering."""
+    """What comes back after answering.
 
-    is_correct: bool
-    correct_answer_id: int
+    In the exam these stay null: the run records the answer and moves on, the
+    same way the real test does. Every other mode fills them in at once.
+    """
+
+    is_correct: bool | None = None
+    correct_answer_id: int | None = None
     explanation: str | None = None
     explanation_video_url: str | None = None
     can_finish: bool
     answered_count: int
+    #: False in the exam while it is still running.
+    reveals_answer: bool = True
 
 
 class SessionRead(BaseModel):
@@ -76,6 +82,9 @@ class SessionRead(BaseModel):
     seconds_left: int | None = None
     #: Slot to open on load: the first unanswered one, else the last.
     current_position: int = Field(ge=0)
+    #: False while an exam is running: the interface must not colour answers
+    #: right or wrong, only mark them as answered.
+    reveals_answers: bool = True
     items: list[ItemState]
     questions: list[QuestionRead]
 

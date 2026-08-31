@@ -1,4 +1,3 @@
-"""Version 1 of the API. New versions get their own package beside this one."""
 from __future__ import annotations
 
 from fastapi import APIRouter

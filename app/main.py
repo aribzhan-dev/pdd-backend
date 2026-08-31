@@ -13,12 +13,16 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+# The interactive docs describe every endpoint and payload. That is exactly
+# what a developer needs and exactly what an attacker would like, so whether
+# they exist at all is a deployment setting.
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     debug=settings.DEBUG,
-    docs_url="/docs",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if settings.ENABLE_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if settings.ENABLE_DOCS else None,
 )
 
 app.add_middleware(

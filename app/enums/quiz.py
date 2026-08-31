@@ -17,6 +17,16 @@ class QuizMode(str, enum.Enum):
         """Human-readable name shown in the UI (Russian)."""
         return QUIZ_MODE_LABELS[self]
 
+    @property
+    def reveals_answers_immediately(self) -> bool:
+        """Whether the verdict is shown as soon as a question is answered.
+
+        The exam mirrors the real one: it records the answer and moves on,
+        saying nothing about right or wrong until the whole run is handed in.
+        Every other mode is for learning, so feedback comes at once.
+        """
+        return self is not QuizMode.EXAM
+
 
 class QuizStatus(str, enum.Enum):
     """Where a session stands. IN_PROGRESS sessions are resumable."""

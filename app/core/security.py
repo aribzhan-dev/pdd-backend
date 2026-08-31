@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -57,38 +58,54 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 
 
 def _create_token(
-    subject: str, role: str, token_type: TokenType, expires_delta: timedelta
+    subject: str,
+    role: str,
+    token_type: TokenType,
+    expires_delta: timedelta,
+    session_id: str | None = None,
 ) -> str:
-    """Sign a JWT for the given subject with an explicit expiry."""
+    """Sign a JWT for the given subject with an explicit expiry.
+
+    `session_id` ties the token to one sign-in; the API refuses a token whose
+    session no longer matches the account's current one.
+    """
     now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": subject,
         "role": role,
         "type": token_type,
+        "sid": session_id,
         "iat": now,
         "exp": now + expires_delta,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_access_token(user_id: int, role: str) -> str:
+def create_access_token(user_id: int, role: str, session_id: str) -> str:
     """Short-lived token sent with every API call."""
     return _create_token(
         str(user_id),
         role,
         "access",
         timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        session_id,
     )
 
 
-def create_refresh_token(user_id: int, role: str) -> str:
+def create_refresh_token(user_id: int, role: str, session_id: str) -> str:
     """Long-lived token used only to mint new access tokens."""
     return _create_token(
         str(user_id),
         role,
         "refresh",
         timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        session_id,
     )
+
+
+def new_session_id() -> str:
+    """Identifier for one sign-in."""
+    return str(uuid.uuid4())
 
 
 def decode_token(token: str, expected_type: TokenType = "access") -> dict[str, Any]:

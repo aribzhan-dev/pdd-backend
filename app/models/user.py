@@ -48,6 +48,11 @@ class User(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    #: Identifies the one sign-in that is currently valid. Every login mints a
+    #: new value and stamps it into the token, so tokens issued to any earlier
+    #: device stop matching and are refused — one account, one device.
+    session_id: Mapped[str | None] = mapped_column(String(36))
+
     # --- Audit: which staff member created this account ---
     created_by_id: Mapped[int | None] = mapped_column(index=True)
 

@@ -1,4 +1,3 @@
-"""Taking a test: start, resume, answer, finish, and read past results."""
 from __future__ import annotations
 
 from typing import Annotated

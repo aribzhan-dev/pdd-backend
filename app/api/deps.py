@@ -14,6 +14,7 @@ from app.core.exceptions import (
     AccountInactiveError,
     InvalidCredentialsError,
     PermissionDeniedError,
+    SessionSupersededError,
 )
 from app.core.security import decode_token
 from app.enums.language import DEFAULT_LANGUAGE, Language
@@ -49,6 +50,10 @@ async def get_current_user(
     user = await UserRepository(session).get_by_id(int(payload["sub"]))
     if user is None or not user.is_active:
         raise AccountInactiveError
+
+    # One account, one device: a login elsewhere replaced this session id.
+    if user.session_id and payload.get("sid") != user.session_id:
+        raise SessionSupersededError
 
     if user.role is UserRole.STUDENT:
         profile = user.student_profile
