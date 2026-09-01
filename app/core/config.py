@@ -19,9 +19,27 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
     #: Serve /docs, /redoc and /openapi.json. Handy in development and for
-    #: handing the API to another developer; off in production by default.
-    ENABLE_DOCS: bool = True
+    #: handing the API to another developer; off in production by default so
+    #: the full API surface is not published to anyone who asks.
+    ENABLE_DOCS: bool = False
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+
+    # --- Sign-in brute-force guard ---
+    #: Failed sign-ins from one IP allowed inside the window before it locks.
+    LOGIN_MAX_ATTEMPTS: int = 5
+    #: How far back failures are counted, in minutes.
+    LOGIN_WINDOW_MINUTES: int = 15
+    #: How long a tripped address stays locked, in minutes.
+    LOGIN_BLOCK_MINUTES: int = 15
+    #: Trust X-Forwarded-For for the client IP. On behind nginx (the real
+    #: address is in the header); off when the app is exposed directly, where
+    #: the header would be attacker-controlled.
+    TRUST_PROXY_HEADERS: bool = True
+
+    # --- HTTP security headers ---
+    #: Send Strict-Transport-Security. On in production (HTTPS); leave off for
+    #: plain-HTTP local development so the browser does not pin localhost.
+    ENABLE_HSTS: bool = False
 
     # --- Database (async DSN, asyncpg driver) ---
     DATABASE_URL: PostgresDsn

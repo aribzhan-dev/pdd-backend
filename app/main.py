@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.errors import register_error_handlers
 from app.api.v1 import api_router
 from app.core.config import get_settings
+from app.core.middleware import SecurityHeadersMiddleware
 
 settings = get_settings()
 
@@ -23,6 +24,11 @@ app = FastAPI(
     docs_url="/docs" if settings.ENABLE_DOCS else None,
     redoc_url="/redoc" if settings.ENABLE_DOCS else None,
     openapi_url="/openapi.json" if settings.ENABLE_DOCS else None,
+)
+
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    enable_hsts=settings.ENABLE_HSTS,
 )
 
 app.add_middleware(

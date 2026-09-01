@@ -58,6 +58,14 @@ async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], 
     await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def reset_login_limiter() -> None:
+    """Clear the process-wide sign-in limiter so tests never leak lock state."""
+    from app.core.rate_limit import get_login_limiter
+
+    get_login_limiter()._buckets.clear()
+
+
 @pytest.fixture
 async def db(
     session_factory: async_sessionmaker[AsyncSession],

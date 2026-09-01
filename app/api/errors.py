@@ -13,6 +13,9 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:
         """Every expected failure answers with the same JSON envelope."""
+        # A rate-limit lock advertises how long to wait, per RFC 7231.
+        retry_after = getattr(exc, "retry_after", None)
+        headers = {"Retry-After": str(retry_after)} if retry_after else None
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -20,4 +23,5 @@ def register_error_handlers(app: FastAPI) -> None:
                 "data": None,
                 "error": exc.message,
             },
+            headers=headers,
         )

@@ -148,7 +148,22 @@ DATABASE_URL=postgresql+asyncpg://pdd:ПАРОЛЬ_ИЗ_ШАГА_3@localhost:543
 SECRET_KEY=<сгенерированный>
 CORS_ORIGINS=["https://<ваш-домен>"]
 MEDIA_SERVE_LOCAL=false
+
+# Продакшн: документация закрыта, HSTS включён, доверяем nginx'у client IP.
+ENABLE_DOCS=false
+ENABLE_HSTS=true
+TRUST_PROXY_HEADERS=true
+
+# Защита входа от перебора: 5 неверных попыток с одного IP за 15 минут →
+# блок на 15 минут.
+LOGIN_MAX_ATTEMPTS=5
+LOGIN_WINDOW_MINUTES=15
+LOGIN_BLOCK_MINUTES=15
 ```
+
+> `DEBUG=false` и `ENABLE_DOCS=false` обязательны на проде: иначе `/docs`,
+> `/redoc` и `/openapi.json` публикуют всю схему API. Значения по умолчанию
+> уже безопасны, но в `.env` лучше указать их явно.
 
 Порт здесь `5432` — на сервере PostgreSQL работает нативно, а не в Docker,
 где локально был проброшен `55432`.
@@ -245,11 +260,23 @@ NODE_OPTIONS=--max-old-space-size=1024 npm run build
 `/etc/nginx/sites-available/pdd`:
 
 ```nginx
+# Второй рубеж защиты входа: не больше 10 запросов в минуту к /api/v1/auth/login
+# с одного IP (приложение считает по-своему, это подстраховка на уровне nginx).
+limit_req_zone $binary_remote_addr zone=login:10m rate=10r/m;
+
 server {
     listen 80;
     server_name <ваш-домен>;
 
     root /srv/pdd/frontend/dist;
+
+    # Заголовки безопасности для HTML и статики (API их ставит сам).
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    # HSTS добавит certbot вместе с HTTPS; при ручной настройке раскомментируйте:
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     # SPA: любой путь отдаёт index.html, дальше маршрутизирует браузер
     location / {
@@ -259,6 +286,16 @@ server {
     location /assets/ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+    }
+
+    # Отдельный, более строгий лимит на сам вход.
+    location = /api/v1/auth/login {
+        limit_req zone=login burst=5 nodelay;
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     location /api/ {
@@ -272,6 +309,12 @@ server {
 ```
 
 Блока `/media/` нет: ссылки на видео абсолютные и ведут на чужие серверы.
+
+> Приложение запускается в два воркера, а встроенный счётчик попыток живёт в
+> памяти процесса — поэтому строгий предел держит именно `limit_req` в nginx,
+> а счётчик приложения добавляет понятное сообщение и `Retry-After`. Если
+> воркеров станет больше или появится несколько серверов, вынесите счётчик в
+> Redis (см. `app/core/rate_limit.py`).
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/pdd /etc/nginx/sites-enabled/

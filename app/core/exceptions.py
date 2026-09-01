@@ -24,6 +24,18 @@ class InvalidCredentialsError(AppError):
     message = "Неверный ИИН или пароль"
 
 
+class TooManyAttemptsError(AppError):
+    """Too many failed sign-ins from one address; it is temporarily locked."""
+
+    status_code = 429
+    message = "Слишком много попыток входа. Повторите позже"
+
+    def __init__(self, retry_after: int, message: str | None = None) -> None:
+        #: Seconds until the caller may try again; surfaced as a Retry-After header.
+        self.retry_after = retry_after
+        super().__init__(message)
+
+
 class AccessExpiredError(AppError):
     """The student's access window has closed."""
 
