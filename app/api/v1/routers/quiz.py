@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Response, status
 
-from app.api.deps import DbSession, StudentDep
+from app.api.deps import DbSession, LanguageDep, StudentDep
 from app.schemas.common import Page
 from app.schemas.quiz import (
     AnswerRequest,
@@ -21,13 +21,16 @@ router = APIRouter(prefix="/quiz", tags=["quiz"])
 
 @router.get("/active", response_model=SessionRead | None)
 async def read_active_session(
-    student: StudentDep, session: DbSession, response: Response
+    student: StudentDep,
+    session: DbSession,
+    language: LanguageDep,
+    response: Response,
 ) -> SessionRead | None:
     """Restore the session left open, so a page reload loses nothing.
 
     Answers a 204 when there is nothing to resume.
     """
-    active = await QuizService(session).get_active(student.id)
+    active = await QuizService(session).get_active(student.id, language)
     if active is None:
         response.status_code = status.HTTP_204_NO_CONTENT
     return active
@@ -47,10 +50,13 @@ async def start_session(
 
 @router.get("/sessions/{session_id}", response_model=SessionRead)
 async def read_session(
-    session_id: int, student: StudentDep, session: DbSession
+    session_id: int,
+    student: StudentDep,
+    session: DbSession,
+    language: LanguageDep,
 ) -> SessionRead:
     """Re-read a session, including every answer already given."""
-    return await QuizService(session).get_session(student.id, session_id)
+    return await QuizService(session).get_session(student.id, session_id, language)
 
 
 @router.post("/sessions/{session_id}/answers", response_model=AnswerResult)
@@ -59,27 +65,34 @@ async def submit_answer(
     payload: AnswerRequest,
     student: StudentDep,
     session: DbSession,
+    language: LanguageDep,
 ) -> AnswerResult:
     """Record an answer and return the verdict and explanation."""
     return await QuizService(session).answer(
-        student.id, session_id, payload.question_id, payload.answer_id
+        student.id, session_id, payload.question_id, payload.answer_id, language
     )
 
 
 @router.post("/sessions/{session_id}/finish", response_model=SessionResult)
 async def finish_session(
-    session_id: int, student: StudentDep, session: DbSession
+    session_id: int,
+    student: StudentDep,
+    session: DbSession,
+    language: LanguageDep,
 ) -> SessionResult:
     """Finish the session — allowed early, from ten answers on."""
-    return await QuizService(session).finish(student.id, session_id)
+    return await QuizService(session).finish(student.id, session_id, language)
 
 
 @router.get("/sessions/{session_id}/result", response_model=SessionResult)
 async def read_result(
-    session_id: int, student: StudentDep, session: DbSession
+    session_id: int,
+    student: StudentDep,
+    session: DbSession,
+    language: LanguageDep,
 ) -> SessionResult:
     """The score card of a finished session."""
-    return await QuizService(session).get_result(student.id, session_id)
+    return await QuizService(session).get_result(student.id, session_id, language)
 
 
 @router.get("/history", response_model=Page[ResultBrief])

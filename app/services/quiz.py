@@ -62,7 +62,9 @@ class QuizService:
 
     # --- Starting and resuming ---------------------------------------------
 
-    async def get_active(self, user_id: int) -> SessionRead | None:
+    async def get_active(
+        self, user_id: int, language: Language | None = None
+    ) -> SessionRead | None:
         """The unfinished session to restore on page load, if any."""
         session = await self.quiz.find_active_session(user_id)
         if session is None:
@@ -70,11 +72,15 @@ class QuizService:
         if session.is_out_of_time:
             await self._close(session)
             return None
-        return await self._read(session)
+        return await self._read(session, language)
 
-    async def get_session(self, user_id: int, session_id: int) -> SessionRead:
+    async def get_session(
+        self, user_id: int, session_id: int, language: Language | None = None
+    ) -> SessionRead:
         """Re-read one of the caller's sessions, answers included."""
-        return await self._read(await self._owned_session(user_id, session_id))
+        return await self._read(
+            await self._owned_session(user_id, session_id), language
+        )
 
     async def start(
         self,
@@ -144,7 +150,12 @@ class QuizService:
     # --- Answering ----------------------------------------------------------
 
     async def answer(
-        self, user_id: int, session_id: int, question_id: int, answer_id: int
+        self,
+        user_id: int,
+        session_id: int,
+        question_id: int,
+        answer_id: int,
+        language: Language | None = None,
     ) -> AnswerResult:
         """Record one answer and return the feedback for it.
 
@@ -181,7 +192,7 @@ class QuizService:
             await self.quiz.record_mistake(user_id, question_id)
         await self.session.commit()
 
-        language = session.language
+        language = language or session.language
         explanation_video = (
             question.explanation_video_kz or question.explanation_video_ru
             if language is Language.KZ
@@ -204,7 +215,9 @@ class QuizService:
 
     # --- Finishing ----------------------------------------------------------
 
-    async def finish(self, user_id: int, session_id: int) -> SessionResult:
+    async def finish(
+        self, user_id: int, session_id: int, language: Language | None = None
+    ) -> SessionResult:
         """Close a session early or at the end and return its result.
 
         Unanswered questions count as wrong, so finishing after ten answers of
@@ -212,7 +225,7 @@ class QuizService:
         """
         session = await self._owned_session(user_id, session_id)
         if session.status is QuizStatus.FINISHED:
-            return _build_result(session)
+            return _build_result(session, language)
         if not session.can_finish:
             raise QuizStateError(
                 f"Ответьте минимум на {MIN_ANSWERS_TO_FINISH} вопросов, "
@@ -220,14 +233,16 @@ class QuizService:
             )
 
         await self._close(session)
-        return _build_result(session)
+        return _build_result(session, language)
 
-    async def get_result(self, user_id: int, session_id: int) -> SessionResult:
+    async def get_result(
+        self, user_id: int, session_id: int, language: Language | None = None
+    ) -> SessionResult:
         """Re-read a finished session's result."""
         session = await self._owned_session(user_id, session_id)
         if session.status is not QuizStatus.FINISHED:
             raise QuizStateError("Сессия ещё не завершена")
-        return _build_result(session)
+        return _build_result(session, language)
 
     async def list_history(
         self, user_id: int, *, page: int, limit: int
@@ -274,18 +289,25 @@ class QuizService:
             raise NotFoundError("Сессия не найдена")
         return session
 
-    async def _read(self, session: QuizSession | None) -> SessionRead:
-        """Serialise a session, revealing answers only where already given."""
+    async def _read(
+        self, session: QuizSession | None, language: Language | None = None
+    ) -> SessionRead:
+        """Serialise a session, revealing answers only where already given.
+
+        `language` overrides the one the session was started with, so the
+        switcher re-renders the same questions rather than being ignored.
+        """
         if session is None:
             raise NotFoundError("Сессия не найдена")
 
+        language = language or session.language
         topic = (
             await self.content.get_topic(session.topic_id)
             if session.topic_id
             else None
         )
         title = (
-            topic_title(topic, session.language)
+            topic_title(topic, language)
             if topic
             else MODE_TITLES.get(session.mode, session.mode.label)
         )
@@ -300,7 +322,7 @@ class QuizService:
             id=session.id,
             mode=to_labeled(session.mode),
             status=to_labeled(session.status),
-            language=session.language,
+            language=language,
             topic_id=session.topic_id,
             title=title,
             started_at=session.started_at,
@@ -317,7 +339,7 @@ class QuizService:
             questions=[
                 serialize_question(
                     item.question,
-                    session.language,
+                    language,
                     reveal_answers=item.is_answered and reveals,
                 )
                 for item in session.items
@@ -356,9 +378,11 @@ def _to_item_state(item: QuizItem, reveals: bool) -> ItemState:
     )
 
 
-def _build_result(session: QuizSession) -> SessionResult:
+def _build_result(
+    session: QuizSession, language: Language | None = None
+) -> SessionResult:
     """Score card plus the list of questions that went wrong."""
-    language = session.language
+    language = language or session.language
     review = [
         QuestionReview(
             position=item.position,

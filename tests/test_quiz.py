@@ -664,3 +664,86 @@ async def test_training_mode_gives_feedback_straight_away(
     assert feedback["is_correct"] is True
     assert feedback["correct_answer_id"] is not None
     assert feedback["explanation"] is not None
+
+
+async def test_switching_language_re_renders_the_same_session(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The switcher must change the questions, not be ignored.
+
+    A session remembers the language it started in, but that is a default —
+    asking for the other language returns the same questions translated,
+    rather than the language the run happened to begin with.
+    """
+    # Arrange — started in Russian
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    started = (
+        await client.post(
+            "/api/v1/quiz/sessions",
+            headers=headers,
+            json={"mode": "topic", "topic_id": topic.id, "language": "ru"},
+        )
+    ).json()
+    assert started["questions"][0]["text"].startswith("Вопрос")
+
+    # Act — the same session, asked for in Kazakh
+    kazakh = (
+        await client.get(
+            f"/api/v1/quiz/sessions/{started['id']}?lang=kz", headers=headers
+        )
+    ).json()
+
+    # Assert
+    assert kazakh["id"] == started["id"]
+    assert kazakh["language"] == "kz"
+    assert kazakh["questions"][0]["text"].startswith("Сұрақ")
+    assert kazakh["title"] == "1. Жалпы ережелер"
+
+
+async def test_the_resumed_session_also_follows_the_language(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    await client.post(
+        "/api/v1/quiz/sessions",
+        headers=headers,
+        json={"mode": "topic", "topic_id": topic.id, "language": "ru"},
+    )
+
+    # Act — what the page does on load after the switcher moved
+    restored = (await client.get("/api/v1/quiz/active?lang=kz", headers=headers)).json()
+
+    # Assert
+    assert restored["questions"][0]["text"].startswith("Сұрақ")
+
+
+async def test_the_result_screen_follows_the_language_too(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    started = (
+        await client.post(
+            "/api/v1/quiz/sessions",
+            headers=headers,
+            json={"mode": "topic", "topic_id": topic.id, "language": "ru"},
+        )
+    ).json()
+    await answer_at(client, headers, started, 0, correct=False)
+
+    # Act
+    result = (
+        await client.post(
+            f"/api/v1/quiz/sessions/{started['id']}/finish?lang=kz", headers=headers
+        )
+    ).json()
+
+    # Assert — the mistake review is translated as well
+    assert result["mistakes"][0]["question_text"].startswith("Сұрақ")
