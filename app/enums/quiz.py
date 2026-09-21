@@ -11,6 +11,8 @@ class QuizMode(str, enum.Enum):
     EXAM = "exam"
     TRAINING = "training"
     MISTAKES = "mistakes"
+    #: A set drawn from several topics the student picked themselves.
+    CUSTOM = "custom"
 
     @property
     def label(self) -> str:
@@ -45,6 +47,7 @@ QUIZ_MODE_LABELS: dict[QuizMode, str] = {
     QuizMode.EXAM: "40 вопросов (аналогично СпецЦОН)",
     QuizMode.TRAINING: "В режиме обучения",
     QuizMode.MISTAKES: "Работа над ошибками",
+    QuizMode.CUSTOM: "Выбранные темы",
 }
 
 QUIZ_STATUS_LABELS: dict[QuizStatus, str] = {

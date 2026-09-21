@@ -7,9 +7,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.quiz import MIN_ANSWERS_TO_FINISH
+from app.services.quiz import CUSTOM_QUESTION_LIMIT
 from tests.conftest import (
     QUESTIONS_PER_TOPIC,
     create_content,
+    create_extra_topic,
     create_student,
     sign_in,
 )
@@ -747,3 +749,131 @@ async def test_the_result_screen_follows_the_language_too(
 
     # Assert — the mistake review is translated as well
     assert result["mistakes"][0]["question_text"].startswith("Сұрақ")
+
+
+# --- Custom runs: a set drawn from several topics the student picked ---------
+
+
+async def start_custom(
+    client: AsyncClient, headers: dict[str, str], topic_ids: list[int]
+) -> dict:
+    """Begin a run over a self-chosen set of topics."""
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        headers=headers,
+        json={"mode": "custom", "topic_ids": topic_ids},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def test_custom_session_caps_the_draw_at_forty_questions(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """A selection wider than the cap is sampled down, not truncated whole."""
+    # Arrange — 45 + 10 questions available, well over the cap
+    big = await create_content(db)
+    small = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_custom(client, headers, [big.id, small.id])
+
+    # Assert
+    assert session["total_questions"] == CUSTOM_QUESTION_LIMIT
+    assert len(session["questions"]) == CUSTOM_QUESTION_LIMIT
+
+
+async def test_custom_session_takes_every_question_when_below_the_cap(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Under the cap the run holds the whole selection, not a padded forty."""
+    # Arrange
+    first = await create_extra_topic(db, number=2, question_count=10)
+    second = await create_extra_topic(db, number=3, question_count=7)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_custom(client, headers, [first.id, second.id])
+
+    # Assert
+    assert session["total_questions"] == 17
+
+
+async def test_custom_session_draws_only_from_the_chosen_topics(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange — an unchosen topic sits in the catalogue alongside the chosen one
+    await create_content(db)
+    chosen = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_custom(client, headers, [chosen.id])
+
+    # Assert
+    assert session["total_questions"] == 10
+    assert all(
+        question["text"].startswith("Тема 2,")
+        for question in session["questions"]
+    )
+
+
+async def test_custom_session_repeats_in_the_selection_are_ignored(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """A stale client sending the same id twice must not double that topic."""
+    # Arrange
+    topic = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_custom(client, headers, [topic.id, topic.id])
+
+    # Assert
+    assert session["total_questions"] == 10
+
+
+async def test_custom_session_needs_at_least_one_topic(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        headers=headers,
+        json={"mode": "custom", "topic_ids": []},
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["error"] == "Выберите хотя бы одну тему"
+
+
+async def test_custom_session_is_untimed_and_gives_feedback_at_once(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """A custom run is for learning, so it has no clock and marks as it goes."""
+    # Arrange
+    topic = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_custom(client, headers, [topic.id])
+    verdict = await answer_at(client, headers, session, 0, correct=True)
+
+    # Assert
+    assert session["time_limit_seconds"] is None
+    assert session["seconds_left"] is None
+    assert session["reveals_answers"] is True
+    assert verdict["is_correct"] is True
+    assert verdict["reveals_answer"] is True

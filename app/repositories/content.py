@@ -72,6 +72,27 @@ class ContentRepository(BaseRepository):
         )
         return list(rows)
 
+    async def sample_questions_by_topics(
+        self, topic_ids: list[int], limit: int
+    ) -> list[Question]:
+        """Draw at random from several topics at once, capped at `limit`.
+
+        The cap is a ceiling rather than a quota: a selection holding fewer
+        questions than `limit` yields all of them. Ordering by random() also
+        interleaves the topics, so the run does not walk through them one
+        block at a time.
+        """
+        if not topic_ids:
+            return []
+        rows = await self.session.scalars(
+            select(Question)
+            .where(Question.topic_id.in_(topic_ids))
+            .options(*_QUESTION_MEDIA)
+            .order_by(func.random())
+            .limit(limit)
+        )
+        return list(rows)
+
     async def list_videos(self) -> list[Video]:
         """Active lesson videos in display order."""
         rows = await self.session.scalars(

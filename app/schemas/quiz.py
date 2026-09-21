@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.enums.language import Language
 from app.enums.quiz import QuizMode
@@ -15,12 +15,35 @@ from app.schemas.common import LabeledValue
 from app.schemas.content import QuestionRead
 
 
+#: Ceiling on a custom selection. The catalogue holds far fewer topics than
+#: this, so a longer list is a malformed request rather than a real choice.
+MAX_CUSTOM_TOPICS = 100
+
+
 class QuizStartRequest(BaseModel):
-    """Begin a run. `topic_id` is required only in TOPIC mode."""
+    """Begin a run.
+
+    `topic_id` is required in TOPIC mode, `topic_ids` in CUSTOM mode; every
+    other mode ignores both.
+    """
 
     mode: QuizMode
     topic_id: int | None = None
+    #: Topics the student ticked for a CUSTOM run.
+    topic_ids: list[int] = Field(
+        default_factory=list, max_length=MAX_CUSTOM_TOPICS
+    )
     language: Language = Language.RU
+
+    @field_validator("topic_ids")
+    @classmethod
+    def _drop_repeats(cls, value: list[int]) -> list[int]:
+        """Deduplicate while keeping order.
+
+        A repeated id would otherwise widen that topic's share of the draw,
+        which is not what ticking a box twice in a stale client should mean.
+        """
+        return list(dict.fromkeys(value))
 
 
 class AnswerRequest(BaseModel):

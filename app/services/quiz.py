@@ -41,11 +41,17 @@ EXAM_QUESTION_COUNT = 40
 #: The exam is timed like the real one; training has no clock.
 EXAM_TIME_LIMIT_SECONDS = 40 * 60
 
+#: A self-chosen topic set is capped at the same size as an exam — more than
+#: forty questions in one sitting is a different exercise. Below the cap the
+#: run simply holds every question the chosen topics have.
+CUSTOM_QUESTION_LIMIT = EXAM_QUESTION_COUNT
+
 #: Fallback headings when the run is not tied to a topic.
 MODE_TITLES: dict[QuizMode, str] = {
     QuizMode.EXAM: "Экзамен",
     QuizMode.TRAINING: "Режим обучения",
     QuizMode.MISTAKES: "Работа над ошибками",
+    QuizMode.CUSTOM: "Выбранные темы",
 }
 
 #: Modes that draw a random 40-question set rather than a fixed topic.
@@ -88,13 +94,16 @@ class QuizService:
         mode: QuizMode,
         language: Language,
         topic_id: int | None,
+        topic_ids: list[int] | None = None,
     ) -> SessionRead:
         """Begin a run, replacing any session still open.
 
         Only one session is active at a time: starting a new one abandons the
         previous one rather than leaving two resumable runs behind.
         """
-        questions = await self._pick_questions(user_id, mode, topic_id)
+        questions = await self._pick_questions(
+            user_id, mode, topic_id, topic_ids or []
+        )
         if not questions:
             raise QuizStateError("Для этого режима нет доступных вопросов")
 
@@ -122,13 +131,24 @@ class QuizService:
         return await self._read(restored)
 
     async def _pick_questions(
-        self, user_id: int, mode: QuizMode, topic_id: int | None
+        self,
+        user_id: int,
+        mode: QuizMode,
+        topic_id: int | None,
+        topic_ids: list[int],
     ) -> list[Question]:
         """Choose the question set for the requested mode."""
         if mode is QuizMode.TOPIC:
             if topic_id is None:
                 raise QuizStateError("Для режима темы нужно указать тему")
             return await self.content.list_questions_by_topic(topic_id)
+
+        if mode is QuizMode.CUSTOM:
+            if not topic_ids:
+                raise QuizStateError("Выберите хотя бы одну тему")
+            return await self.content.sample_questions_by_topics(
+                topic_ids, CUSTOM_QUESTION_LIMIT
+            )
 
         if mode in RANDOM_MODES:
             return await self.content.sample_random_questions(EXAM_QUESTION_COUNT)

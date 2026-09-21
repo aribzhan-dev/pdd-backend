@@ -191,6 +191,47 @@ async def create_content(db: AsyncSession) -> Topic:
     return topic
 
 
+async def create_extra_topic(
+    db: AsyncSession, *, number: int, question_count: int
+) -> Topic:
+    """A second, media-free topic for tests that need more than one.
+
+    `create_content` builds the rich topic the media and localisation tests
+    rely on. This one exists only to be picked alongside it, so it carries
+    just enough to be answerable and its question texts name their topic,
+    which is how a draw can be proved to have stayed inside the selection.
+    """
+    topic = Topic(
+        number=number,
+        title_ru=f"Тема {number}",
+        title_kz=f"Тақырып {number}",
+    )
+    db.add(topic)
+    await db.flush()
+
+    for index in range(question_count):
+        question = Question(
+            topic_id=topic.id,
+            text_ru=f"Тема {number}, вопрос {index}",
+            text_kz=f"Тақырып {number}, сұрақ {index}",
+            content_hash=f"hash-{number}-{index}",
+            order=index,
+        )
+        db.add(question)
+        await db.flush()
+        for choice in range(3):
+            db.add(
+                Answer(
+                    question_id=question.id,
+                    text_ru=f"Ответ {choice}",
+                    is_correct=choice == 0,
+                    order=choice,
+                )
+            )
+    await db.commit()
+    return topic
+
+
 async def sign_in(client: AsyncClient, iin: str) -> dict[str, str]:
     """Log in and return the Authorization header for later calls."""
     response = await client.post(
