@@ -18,6 +18,10 @@ from tests.conftest import (
 
 STUDENT_IIN = "060422501511"
 
+#: The content fixtures give every question three options and mark this one
+#: correct. Answers are served in a shuffled order, so tests match on the text.
+CORRECT_ANSWER_TEXT = "Ответ 0"
+
 
 async def start_exam(client: AsyncClient, headers: dict[str, str]) -> dict:
     """Begin an exam run and return the session payload."""
@@ -42,8 +46,14 @@ async def answer_at(
 ) -> dict:
     """Answer one slot, picking the right or a wrong option on purpose."""
     question = session["questions"][position]
-    # Content fixtures mark the first option correct and the rest wrong.
-    answer = question["answers"][0 if correct else 1]
+    # Content fixtures mark the option reading CORRECT_ANSWER_TEXT as the right
+    # one. Options come back shuffled, so it has to be found by text — its
+    # position differs from question to question.
+    answer = next(
+        option
+        for option in question["answers"]
+        if (option["text"] == CORRECT_ANSWER_TEXT) is correct
+    )
     response = await client.post(
         f"/api/v1/quiz/sessions/{session['id']}/answers",
         headers=headers,
@@ -877,3 +887,88 @@ async def test_custom_session_is_untimed_and_gives_feedback_at_once(
     assert session["reveals_answers"] is True
     assert verdict["is_correct"] is True
     assert verdict["reveals_answer"] is True
+
+
+# --- Shuffling: options within a question, questions within a topic ----------
+
+
+def _correct_option_positions(session: dict) -> list[int]:
+    """Where the correct option landed in each question of the session."""
+    return [
+        [option["text"] for option in question["answers"]].index(
+            CORRECT_ANSWER_TEXT
+        )
+        for question in session["questions"]
+    ]
+
+
+async def test_answer_options_are_shuffled_within_a_session(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The correct option must not sit in the same slot every time.
+
+    With three options over forty questions, a run that never moves it is
+    beyond coincidence — so seeing more than one position proves the shuffle.
+    """
+    # Arrange
+    await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_exam(client, headers)
+
+    # Assert
+    assert len(set(_correct_option_positions(session))) > 1
+
+
+async def test_answer_order_survives_a_reload(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The shuffle is drawn once per slot, not per request.
+
+    Re-reading a session must not move the options under the student — they
+    would otherwise jump every time the page reloads or the strip is used.
+    """
+    # Arrange
+    await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_exam(client, headers)
+
+    # Act
+    resumed = await client.get("/api/v1/quiz/active", headers=headers)
+
+    # Assert
+    assert resumed.status_code == 200
+    assert _correct_option_positions(resumed.json()) == _correct_option_positions(
+        session
+    )
+
+
+async def test_topic_runs_draw_their_questions_in_a_fresh_order(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Two attempts at the same topic must not walk it in the same sequence."""
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    async def start_topic_run() -> list[int]:
+        response = await client.post(
+            "/api/v1/quiz/sessions",
+            headers=headers,
+            json={"mode": "topic", "topic_id": topic.id},
+        )
+        assert response.status_code == 201, response.text
+        return [question["id"] for question in response.json()["questions"]]
+
+    # Act — the second run abandons the first, which is the normal flow
+    first = await start_topic_run()
+    second = await start_topic_run()
+
+    # Assert — the same questions, a different sequence
+    assert sorted(first) == sorted(second)
+    assert len(first) == QUESTIONS_PER_TOPIC
+    assert first != second

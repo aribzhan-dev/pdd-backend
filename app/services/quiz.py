@@ -141,7 +141,10 @@ class QuizService:
         if mode is QuizMode.TOPIC:
             if topic_id is None:
                 raise QuizStateError("Для режима темы нужно указать тему")
-            return await self.content.list_questions_by_topic(topic_id)
+            questions = await self.content.list_questions_by_topic(topic_id)
+            # The catalogue lists a topic in its authored order; running it is
+            # a test, so the order is drawn fresh for every attempt.
+            return _shuffled(questions)
 
         if mode is QuizMode.CUSTOM:
             if not topic_ids:
@@ -154,9 +157,7 @@ class QuizService:
             return await self.content.sample_random_questions(EXAM_QUESTION_COUNT)
 
         mistake_ids = await self.quiz.list_mistake_question_ids(user_id)
-        questions = await self.content.get_questions(mistake_ids)
-        random.shuffle(questions)
-        return questions
+        return _shuffled(await self.content.get_questions(mistake_ids))
 
     async def _abandon_active(self, user_id: int) -> None:
         """Close any session left open, so exactly one is resumable."""
@@ -361,10 +362,18 @@ class QuizService:
                     item.question,
                     language,
                     reveal_answers=item.is_answered and reveals,
+                    #: The slot id keeps each question's option order fixed for
+                    #: this session while differing between sessions.
+                    answer_seed=item.id,
                 )
                 for item in session.items
             ],
         )
+
+
+def _shuffled(questions: list[Question]) -> list[Question]:
+    """A new list in random order, leaving the caller's list untouched."""
+    return random.sample(questions, len(questions))
 
 
 def _correct_answer(question: Question) -> Answer:

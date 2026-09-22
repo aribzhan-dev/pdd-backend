@@ -6,11 +6,14 @@ receives an empty string.
 """
 from __future__ import annotations
 
+import random
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.exceptions import NotFoundError
 from app.enums.language import Language
+from app.models.answer import Answer
 from app.models.media_asset import MediaAsset
 from app.models.question import Question
 from app.models.topic import Topic
@@ -61,14 +64,37 @@ def media_url(asset: MediaAsset | None) -> MediaRead | None:
     )
 
 
+def shuffled_answers(question: Question, seed: int) -> list[Answer]:
+    """The question's options in a stable, seeded random order.
+
+    Two things are needed at once: the correct option must not sit in the same
+    place every time, and the order must not move under the student. Seeding
+    from the session's own slot id gives both — the order is drawn once per
+    slot, so a reload, a revisit from the navigation strip or the result screen
+    all show the options exactly where they were.
+    """
+    return random.Random(seed).sample(question.answers, len(question.answers))
+
+
 def serialize_question(
-    question: Question, language: Language, *, reveal_answers: bool
+    question: Question,
+    language: Language,
+    *,
+    reveal_answers: bool,
+    answer_seed: int | None = None,
 ) -> QuestionRead:
     """Render a question in one language.
 
     `reveal_answers` stays False while the question is unanswered so the
-    correct option is not sitting in the network response.
+    correct option is not sitting in the network response. `answer_seed`
+    shuffles the options; without it they keep their authored order, which is
+    what the catalogue listing wants.
     """
+    answers = (
+        shuffled_answers(question, answer_seed)
+        if answer_seed is not None
+        else list(question.answers)
+    )
     explanation_video = (
         question.explanation_video_kz or question.explanation_video_ru
         if language is Language.KZ
@@ -92,7 +118,7 @@ def serialize_question(
                 text=localize(answer.text_ru, answer.text_kz, language) or "",
                 is_correct=answer.is_correct if reveal_answers else None,
             )
-            for answer in question.answers
+            for answer in answers
         ],
     )
 
