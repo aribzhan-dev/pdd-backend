@@ -26,3 +26,6 @@ bcrypt>=4.0
 pytest>=8.3
 pytest-asyncio>=0.25
 httpx>=0.28
+# The suite builds its schema in an in-memory SQLite database so it needs no
+# PostgreSQL server; without this driver every test errors at fixture setup.
+aiosqlite>=0.20
