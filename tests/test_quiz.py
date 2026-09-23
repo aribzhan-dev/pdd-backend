@@ -10,6 +10,7 @@ from app.models.quiz import MIN_ANSWERS_TO_FINISH
 from app.services.quiz import CUSTOM_QUESTION_LIMIT
 from tests.conftest import (
     QUESTIONS_PER_TOPIC,
+    add_same_wording_questions,
     create_content,
     create_extra_topic,
     create_student,
@@ -972,3 +973,47 @@ async def test_topic_runs_draw_their_questions_in_a_fresh_order(
     assert sorted(first) == sorted(second)
     assert len(first) == QUESTIONS_PER_TOPIC
     assert first != second
+
+
+async def test_a_drawn_run_never_asks_the_same_wording_twice(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Two questions that read alike must not land in one run.
+
+    They are different questions — different pictures, different options — but
+    a student reading the same sentence twice in one test concludes the test
+    is broken.
+    """
+    # Arrange — six questions sharing one wording, among the topic's own 45
+    topic = await create_content(db)
+    await add_same_wording_questions(
+        db, topic, text="Кому Вы уступите дорогу?", count=6
+    )
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_exam(client, headers)
+
+    # Assert
+    texts = [question["text"] for question in session["questions"]]
+    assert len(texts) == len(set(texts))
+
+
+async def test_a_drawn_run_still_fills_up_to_forty(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Dropping repeated wordings must not quietly shorten the exam."""
+    # Arrange
+    topic = await create_content(db)
+    await add_same_wording_questions(
+        db, topic, text="Кому Вы уступите дорогу?", count=6
+    )
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_exam(client, headers)
+
+    # Assert
+    assert session["total_questions"] == CUSTOM_QUESTION_LIMIT

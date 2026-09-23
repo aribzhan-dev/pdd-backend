@@ -62,36 +62,23 @@ class ContentRepository(BaseRepository):
         )
         return list(rows)
 
-    async def sample_random_questions(self, count: int) -> list[Question]:
-        """Pick questions at random for an exam run."""
-        rows = await self.session.scalars(
-            select(Question)
-            .options(*_QUESTION_MEDIA)
-            .order_by(func.random())
-            .limit(count)
-        )
-        return list(rows)
+    async def list_question_wordings(
+        self, topic_ids: list[int] | None = None
+    ) -> list[tuple[int, str]]:
+        """Every candidate question as `(id, text)`, media left behind.
 
-    async def sample_questions_by_topics(
-        self, topic_ids: list[int], limit: int
-    ) -> list[Question]:
-        """Draw at random from several topics at once, capped at `limit`.
-
-        The cap is a ceiling rather than a quota: a selection holding fewer
-        questions than `limit` yields all of them. Ordering by random() also
-        interleaves the topics, so the run does not walk through them one
-        block at a time.
+        Building a run needs to know which questions read the same before it
+        knows which ones it wants, and a thousand short strings are cheap to
+        fetch where a thousand questions with their media are not. The chosen
+        ids then come back through `get_questions`.
         """
-        if not topic_ids:
-            return []
-        rows = await self.session.scalars(
-            select(Question)
-            .where(Question.topic_id.in_(topic_ids))
-            .options(*_QUESTION_MEDIA)
-            .order_by(func.random())
-            .limit(limit)
-        )
-        return list(rows)
+        statement = select(Question.id, Question.text_ru)
+        if topic_ids is not None:
+            if not topic_ids:
+                return []
+            statement = statement.where(Question.topic_id.in_(topic_ids))
+        rows = await self.session.execute(statement)
+        return [(question_id, text) for question_id, text in rows]
 
     async def list_videos(self) -> list[Video]:
         """Active lesson videos in display order."""

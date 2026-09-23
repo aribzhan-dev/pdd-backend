@@ -11,6 +11,8 @@ Three requirements shape this service:
 from __future__ import annotations
 
 import random
+import re
+from collections import defaultdict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -149,15 +151,27 @@ class QuizService:
         if mode is QuizMode.CUSTOM:
             if not topic_ids:
                 raise QuizStateError("Выберите хотя бы одну тему")
-            return await self.content.sample_questions_by_topics(
-                topic_ids, CUSTOM_QUESTION_LIMIT
-            )
+            return await self._draw(CUSTOM_QUESTION_LIMIT, topic_ids=topic_ids)
 
         if mode in RANDOM_MODES:
-            return await self.content.sample_random_questions(EXAM_QUESTION_COUNT)
+            return await self._draw(EXAM_QUESTION_COUNT)
 
         mistake_ids = await self.quiz.list_mistake_question_ids(user_id)
         return _shuffled(await self.content.get_questions(mistake_ids))
+
+    async def _draw(
+        self, limit: int, topic_ids: list[int] | None = None
+    ) -> list[Question]:
+        """A random set of at most `limit` questions, no wording used twice.
+
+        The bank asks the same thing in several ways: ten questions read
+        "В какой последовательности проедут перекресток..." and differ only in
+        the picture. Drawn blindly, better than a third of forty-question runs
+        carried at least one such pair, which a student reads as the test
+        repeating itself even though the two questions are different.
+        """
+        wordings = await self.content.list_question_wordings(topic_ids)
+        return _shuffled(await self.content.get_questions(_pick(wordings, limit)))
 
     async def _abandon_active(self, user_id: int) -> None:
         """Close any session left open, so exactly one is resumable."""
@@ -369,6 +383,30 @@ class QuizService:
                 for item in session.items
             ],
         )
+
+
+#: Everything that separates two spellings of the same question: case, the
+#: ё/е the two source platforms disagree on, punctuation and stray spacing.
+_NON_WORD = re.compile(r"[^\w]+")
+
+
+def _wording(text: str) -> str:
+    """The question stem reduced to what a student would hear read aloud."""
+    return _NON_WORD.sub(" ", text.lower().replace("ё", "е")).strip()
+
+
+def _pick(wordings: list[tuple[int, str]], limit: int) -> list[int]:
+    """Ids for one run: at most `limit`, and never two that read the same.
+
+    Each group of same-reading questions contributes one id, chosen at random,
+    so no single picture becomes the permanent stand-in for its wording.
+    """
+    by_wording: dict[str, list[int]] = defaultdict(list)
+    for question_id, text in wordings:
+        by_wording[_wording(text)].append(question_id)
+
+    candidates = [random.choice(ids) for ids in by_wording.values()]
+    return random.sample(candidates, min(limit, len(candidates)))
 
 
 def _shuffled(questions: list[Question]) -> list[Question]:

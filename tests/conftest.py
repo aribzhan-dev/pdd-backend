@@ -232,6 +232,37 @@ async def create_extra_topic(
     return topic
 
 
+async def add_same_wording_questions(
+    db: AsyncSession, topic: Topic, *, text: str, count: int
+) -> None:
+    """Several questions that read identically and differ only in their options.
+
+    The real bank is full of these: a dozen picture questions all asking
+    "Кому Вы уступите дорогу?", each with its own junction. A drawn run must
+    never take two of them, or it reads as the test repeating itself.
+    """
+    for index in range(count):
+        question = Question(
+            topic_id=topic.id,
+            text_ru=text,
+            text_kz=text,
+            content_hash=f"twin-{topic.id}-{index}",
+            order=1000 + index,
+        )
+        db.add(question)
+        await db.flush()
+        for choice in range(3):
+            db.add(
+                Answer(
+                    question_id=question.id,
+                    text_ru=f"Ответ {choice} варианта {index}",
+                    is_correct=choice == 0,
+                    order=choice,
+                )
+            )
+    await db.commit()
+
+
 async def sign_in(client: AsyncClient, iin: str) -> dict[str, str]:
     """Log in and return the Authorization header for later calls."""
     response = await client.post(
