@@ -3,6 +3,13 @@
 Tests run against SQLite rather than PostgreSQL so they need no server. The
 models avoid native enums and other dialect-specific features precisely so the
 same schema builds on both.
+
+Settings are pinned below before anything imports the application. `Settings`
+reads a `.env` from the working directory, and on a deployed machine the suite
+runs next to the production one — which is how a green suite locally turned
+red on the server, where MEDIA_SERVE_LOCAL is false and the media tests assert
+the local form. Environment variables win over the file, so assigning them
+here makes the run say the same thing wherever it happens.
 """
 from __future__ import annotations
 
@@ -12,6 +19,10 @@ from datetime import UTC, datetime, timedelta
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://pdd:pdd@localhost/pdd")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-that-is-long-enough-000000")
+
+#: Assigned, not defaulted: the point is to override whatever .env says.
+os.environ["MEDIA_SERVE_LOCAL"] = "true"
+os.environ["MEDIA_URL_PREFIX"] = "/media"
 
 import pytest
 from httpx import ASGITransport, AsyncClient
