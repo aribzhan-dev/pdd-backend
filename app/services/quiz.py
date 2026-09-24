@@ -122,6 +122,7 @@ class QuizService:
         session = QuizSession(
             user_id=user_id,
             topic_id=topic_id if mode is QuizMode.TOPIC else None,
+            topic_part=part if mode is QuizMode.TOPIC else None,
             mode=mode,
             language=language,
             status=QuizStatus.IN_PROGRESS,
@@ -351,11 +352,22 @@ class QuizService:
             if session.topic_id
             else None
         )
+        # Only a part-run needs the chapter's size, to say "2/4" rather than
+        # just "2"; every other run skips the count entirely.
+        topic_questions = (
+            (await self.content.count_questions_by_topic()).get(session.topic_id, 0)
+            if topic and session.topic_part is not None
+            else 0
+        )
         title = (
             topic_title(topic, language)
             if topic
             else MODE_TITLES.get(session.mode, session.mode.label)
         )
+        # A run over one part of a long chapter says so, or a student
+        # resuming it has no way to tell which stretch they are in.
+        if topic and session.topic_part is not None:
+            title = f"{title} · {session.topic_part}/{part_count(topic_questions)}"
 
         # A finished exam may be reviewed in full; a running one may not.
         reveals = (

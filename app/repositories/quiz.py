@@ -70,8 +70,15 @@ class QuizRepository(BaseRepository):
         )
         return list(rows), int(total or 0)
 
-    async def best_percent_by_topic(self, user_id: int) -> dict[int, int]:
-        """Best score per topic, used for the catalogue badges.
+    async def best_percent_by_topic_part(
+        self, user_id: int
+    ) -> dict[tuple[int, int | None], int]:
+        """Best score per topic and part, used for the catalogue badges.
+
+        The key's second half is the part number, or None for a run that took
+        the topic whole — which every run was before topics were split, so old
+        results keep a place of their own rather than being attributed to a
+        part they never covered.
 
         The score of one session is computed in a subquery first: taking the
         maximum of a count in a single query would nest one aggregate inside
@@ -80,6 +87,7 @@ class QuizRepository(BaseRepository):
         per_session = (
             select(
                 QuizSession.topic_id.label("topic_id"),
+                QuizSession.topic_part.label("topic_part"),
                 (
                     100.0
                     * func.count(QuizItem.id).filter(QuizItem.is_correct.is_(True))
@@ -92,17 +100,22 @@ class QuizRepository(BaseRepository):
                 QuizSession.status == QuizStatus.FINISHED,
                 QuizSession.topic_id.is_not(None),
             )
-            .group_by(QuizSession.id, QuizSession.topic_id)
+            .group_by(
+                QuizSession.id, QuizSession.topic_id, QuizSession.topic_part
+            )
             .subquery()
         )
 
         rows = await self.session.execute(
-            select(per_session.c.topic_id, func.max(per_session.c.percent))
-            .group_by(per_session.c.topic_id)
+            select(
+                per_session.c.topic_id,
+                per_session.c.topic_part,
+                func.max(per_session.c.percent),
+            ).group_by(per_session.c.topic_id, per_session.c.topic_part)
         )
         return {
-            topic_id: int(round(percent or 0))
-            for topic_id, percent in rows
+            (topic_id, topic_part): int(round(percent or 0))
+            for topic_id, topic_part, percent in rows
             if topic_id is not None
         }
 

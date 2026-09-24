@@ -5,7 +5,7 @@ before serialising, so the client receives plain fields.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MediaRead(BaseModel):
@@ -37,6 +37,15 @@ class QuestionRead(BaseModel):
     answers: list[AnswerRead]
 
 
+class TopicPartBrief(BaseModel):
+    """One sitting-sized stretch of a long topic, with its own score."""
+
+    #: 1-based, and what a run passes back as `part`.
+    index: int
+    question_count: int
+    best_percent: int | None = None
+
+
 class TopicBrief(BaseModel):
     """Catalogue tile for one topic."""
 
@@ -44,8 +53,10 @@ class TopicBrief(BaseModel):
     number: int
     title: str
     question_count: int
-    #: How many parts the topic is offered in. 1 means it is run in one go.
-    part_count: int = 1
+    #: Empty when the topic is short enough to be run in one go.
+    parts: list[TopicPartBrief] = Field(default_factory=list)
+    #: Across the whole chapter: parts count for what they hold, so one part
+    #: of four at 100% shows as a quarter.
     best_percent: int | None = None
 
 

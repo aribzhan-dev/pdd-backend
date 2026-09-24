@@ -47,6 +47,10 @@ class QuizSession(Base, TimestampMixin):
     topic_id: Mapped[int | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL")
     )
+    #: Which part of a long topic this run covered, 1-based. None means the
+    #: topic was taken whole — the only kind of run there was before parts,
+    #: and still what a short topic produces.
+    topic_part: Mapped[int | None] = mapped_column(Integer)
 
     mode: Mapped[QuizMode] = mapped_column(
         Enum(QuizMode, native_enum=False, length=20), nullable=False

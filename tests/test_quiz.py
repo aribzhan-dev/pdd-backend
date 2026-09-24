@@ -1053,8 +1053,12 @@ async def test_the_catalogue_reports_how_many_parts_a_topic_has(
     # Assert
     by_number = {topic["number"]: topic for topic in response.json()}
     assert by_number[1]["question_count"] == QUESTIONS_PER_TOPIC
-    assert by_number[1]["part_count"] == 2
-    assert by_number[2]["part_count"] == 1
+    assert [part["question_count"] for part in by_number[1]["parts"]] == [
+        TOPIC_PART_SIZE,
+        QUESTIONS_PER_TOPIC - TOPIC_PART_SIZE,
+    ]
+    # An undivided topic offers no parts at all, not one part covering itself.
+    assert by_number[2]["parts"] == []
 
 
 async def test_a_part_holds_one_sitting_and_the_last_one_the_remainder(
@@ -1157,3 +1161,132 @@ async def test_a_topic_asked_for_whole_is_still_served_whole(
 
     # Assert
     assert session["total_questions"] == QUESTIONS_PER_TOPIC
+
+
+# --- Scoring a chapter part by part -----------------------------------------
+
+
+async def finish_all_correct(
+    client: AsyncClient, headers: dict[str, str], session: dict
+) -> None:
+    """Answer every question of a run correctly and hand it in."""
+    for position in range(session["total_questions"]):
+        await answer_at(client, headers, session, position, correct=True)
+    response = await client.post(
+        f"/api/v1/quiz/sessions/{session['id']}/finish", headers=headers
+    )
+    assert response.status_code == 200, response.text
+
+
+async def topic_tile(client: AsyncClient, headers: dict[str, str]) -> dict:
+    """The first catalogue tile, which the content fixture makes topic 1."""
+    response = await client.get("/api/v1/topics", headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()[0]
+
+
+async def test_a_part_carries_its_own_score(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act — the first part answered perfectly, the second left alone
+    await finish_all_correct(
+        client, headers, await start_topic_part(client, headers, topic.id, 1)
+    )
+
+    # Assert
+    parts = (await topic_tile(client, headers))["parts"]
+    assert parts[0]["best_percent"] == 100
+    assert parts[1]["best_percent"] is None
+
+
+async def test_one_finished_part_moves_the_chapter_by_its_share(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """A part weighs what it holds, so a perfect part is not a perfect topic.
+
+    The fixture's 45 questions split 40 and 5: finishing the first leaves the
+    chapter at 40 of 45.
+    """
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    await finish_all_correct(
+        client, headers, await start_topic_part(client, headers, topic.id, 1)
+    )
+
+    # Assert
+    tile = await topic_tile(client, headers)
+    assert tile["best_percent"] == round(
+        TOPIC_PART_SIZE / QUESTIONS_PER_TOPIC * 100
+    )
+
+
+async def test_finishing_every_part_completes_the_chapter(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    for part in (1, 2):
+        await finish_all_correct(
+            client, headers, await start_topic_part(client, headers, topic.id, part)
+        )
+
+    # Assert
+    tile = await topic_tile(client, headers)
+    assert tile["best_percent"] == 100
+    assert [part["best_percent"] for part in tile["parts"]] == [100, 100]
+
+
+async def test_a_whole_topic_result_still_counts_after_the_split(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Runs taken before parts existed keep their score.
+
+    Their sessions carry no part, so the weighted figure would read zero for
+    them; the better of the two stands instead.
+    """
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act — a whole-topic run, the only shape that existed before
+    await finish_all_correct(
+        client, headers, await start_topic_part(client, headers, topic.id, None)
+    )
+
+    # Assert
+    tile = await topic_tile(client, headers)
+    assert tile["best_percent"] == 100
+    # It belongs to no part, so no part claims it.
+    assert [part["best_percent"] for part in tile["parts"]] == [None, None]
+
+
+async def test_a_part_run_says_which_part_it_is(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """A resumed run has to tell the student which stretch they are in."""
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_topic_part(client, headers, topic.id, 2)
+    resumed = await client.get("/api/v1/quiz/active", headers=headers)
+
+    # Assert
+    assert session["title"].endswith("· 2/2")
+    assert resumed.json()["title"] == session["title"]

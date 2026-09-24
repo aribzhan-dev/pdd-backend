@@ -27,6 +27,7 @@ from app.schemas.content import (
     QuestionRead,
     TopicBrief,
     TopicDetail,
+    TopicPartBrief,
     VideoRead,
 )
 
@@ -49,6 +50,45 @@ def part_slice(part: int) -> slice:
     """Which stretch of a topic's questions belongs to `part` (1-based)."""
     start = (part - 1) * TOPIC_PART_SIZE
     return slice(start, start + TOPIC_PART_SIZE)
+
+
+def part_sizes(question_count: int) -> list[int]:
+    """How many questions each part holds, in order.
+
+    Parts are filled to TOPIC_PART_SIZE and the last takes the remainder, so a
+    chapter of 135 reads 40, 40, 40, 15.
+    """
+    if question_count <= 0:
+        return []
+    whole, remainder = divmod(question_count, TOPIC_PART_SIZE)
+    sizes = [TOPIC_PART_SIZE] * whole
+    if remainder:
+        sizes.append(remainder)
+    return sizes
+
+
+def topic_percent(
+    sizes: list[int],
+    part_best: dict[int, int],
+    whole_best: int | None,
+) -> int | None:
+    """The chapter's score as a share of every question in it.
+
+    Each part weighs as much as it holds and a part never attempted counts as
+    zero: one part of four at 100% leaves the chapter a quarter done, not
+    finished. A whole-topic result — the only kind that existed before parts —
+    is compared against that and the better of the two stands, so switching to
+    parts does not wipe a score a student already earned.
+    """
+    if not part_best and whole_best is None:
+        return None
+    total = sum(sizes)
+    if not total:
+        return None
+    earned = sum(
+        part_best.get(index, 0) * size for index, size in enumerate(sizes, 1)
+    )
+    return max(round(earned / total), whole_best or 0)
 
 
 def localize(ru: str | None, kz: str | None, language: Language) -> str | None:
@@ -142,6 +182,43 @@ def serialize_question(
     )
 
 
+def _brief(
+    topic: Topic,
+    title: str,
+    question_count: int,
+    best: dict[tuple[int, int | None], int],
+) -> TopicBrief:
+    """One catalogue tile, with a score for the chapter and for each part."""
+    sizes = part_sizes(question_count)
+    is_split = len(sizes) > 1
+    part_best = {
+        part: percent
+        for (topic_id, part), percent in best.items()
+        if topic_id == topic.id and part is not None
+    }
+    whole_best = best.get((topic.id, None))
+
+    return TopicBrief(
+        id=topic.id,
+        number=topic.number,
+        title=title,
+        question_count=question_count,
+        parts=(
+            [
+                TopicPartBrief(
+                    index=index,
+                    question_count=size,
+                    best_percent=part_best.get(index),
+                )
+                for index, size in enumerate(sizes, 1)
+            ]
+            if is_split
+            else []
+        ),
+        best_percent=topic_percent(sizes, part_best, whole_best),
+    )
+
+
 class ContentService:
     """Read-side of the learning catalogue."""
 
@@ -153,15 +230,13 @@ class ContentService:
         """Catalogue tiles, each carrying the student's best score so far."""
         topics = await self.content.list_topics()
         counts = await self.content.count_questions_by_topic()
-        best = await self.quiz.best_percent_by_topic(user_id)
+        best = await self.quiz.best_percent_by_topic_part(user_id)
         return [
-            TopicBrief(
-                id=topic.id,
-                number=topic.number,
-                title=localize(topic.title_ru, topic.title_kz, language) or "",
-                question_count=counts.get(topic.id, 0),
-                part_count=part_count(counts.get(topic.id, 0)),
-                best_percent=best.get(topic.id),
+            _brief(
+                topic,
+                localize(topic.title_ru, topic.title_kz, language) or "",
+                counts.get(topic.id, 0),
+                best,
             )
             for topic in topics
         ]
@@ -175,11 +250,15 @@ class ContentService:
             raise NotFoundError("Тема не найдена")
 
         questions = await self.content.list_questions_by_topic(topic_id)
-        best = await self.quiz.best_percent_by_topic(user_id)
+        best = await self.quiz.best_percent_by_topic_part(user_id)
+        brief = _brief(
+            topic,
+            localize(topic.title_ru, topic.title_kz, language) or "",
+            len(questions),
+            best,
+        )
         return TopicDetail(
-            id=topic.id,
-            number=topic.number,
-            title=localize(topic.title_ru, topic.title_kz, language) or "",
+            **brief.model_dump(),
             description=localize(
                 topic.description_ru, topic.description_kz, language
             ),
