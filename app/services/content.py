@@ -6,6 +6,7 @@ receives an empty string.
 """
 from __future__ import annotations
 
+import math
 import random
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,24 @@ from app.schemas.content import (
 )
 
 settings = get_settings()
+
+#: A topic longer than this is offered in parts, so that one sitting stays the
+#: size of an exam however large the chapter is. Parts are filled to this size
+#: in order and the last one takes what is left.
+TOPIC_PART_SIZE = 40
+
+
+def part_count(question_count: int) -> int:
+    """How many parts a topic of this size is offered in; 1 means undivided."""
+    if question_count <= TOPIC_PART_SIZE:
+        return 1
+    return math.ceil(question_count / TOPIC_PART_SIZE)
+
+
+def part_slice(part: int) -> slice:
+    """Which stretch of a topic's questions belongs to `part` (1-based)."""
+    start = (part - 1) * TOPIC_PART_SIZE
+    return slice(start, start + TOPIC_PART_SIZE)
 
 
 def localize(ru: str | None, kz: str | None, language: Language) -> str | None:
@@ -141,6 +160,7 @@ class ContentService:
                 number=topic.number,
                 title=localize(topic.title_ru, topic.title_kz, language) or "",
                 question_count=counts.get(topic.id, 0),
+                part_count=part_count(counts.get(topic.id, 0)),
                 best_percent=best.get(topic.id),
             )
             for topic in topics

@@ -34,7 +34,14 @@ from app.schemas.quiz import (
     SessionRead,
     SessionResult,
 )
-from app.services.content import localize, media_url, serialize_question, topic_title
+from app.services.content import (
+    localize,
+    media_url,
+    part_count,
+    part_slice,
+    serialize_question,
+    topic_title,
+)
 from app.services.labels import to_labeled
 
 #: Number of questions drawn for an exam or a training run.
@@ -97,6 +104,7 @@ class QuizService:
         language: Language,
         topic_id: int | None,
         topic_ids: list[int] | None = None,
+        part: int | None = None,
     ) -> SessionRead:
         """Begin a run, replacing any session still open.
 
@@ -104,7 +112,7 @@ class QuizService:
         previous one rather than leaving two resumable runs behind.
         """
         questions = await self._pick_questions(
-            user_id, mode, topic_id, topic_ids or []
+            user_id, mode, topic_id, topic_ids or [], part
         )
         if not questions:
             raise QuizStateError("Для этого режима нет доступных вопросов")
@@ -138,12 +146,14 @@ class QuizService:
         mode: QuizMode,
         topic_id: int | None,
         topic_ids: list[int],
+        part: int | None = None,
     ) -> list[Question]:
         """Choose the question set for the requested mode."""
         if mode is QuizMode.TOPIC:
             if topic_id is None:
                 raise QuizStateError("Для режима темы нужно указать тему")
             questions = await self.content.list_questions_by_topic(topic_id)
+            questions = _take_part(questions, part)
             # The catalogue lists a topic in its authored order; running it is
             # a test, so the order is drawn fresh for every attempt.
             return _shuffled(questions)
@@ -407,6 +417,25 @@ def _pick(wordings: list[tuple[int, str]], limit: int) -> list[int]:
 
     candidates = [random.choice(ids) for ids in by_wording.values()]
     return random.sample(candidates, min(limit, len(candidates)))
+
+
+def _take_part(questions: list[Question], part: int | None) -> list[Question]:
+    """One stretch of a long topic, or the whole of a short one.
+
+    The slice is cut from the authored order, not from a shuffle, so part two
+    holds the same questions today as it did yesterday — otherwise working
+    through a chapter part by part would never cover it.
+    """
+    if part is None:
+        return questions
+
+    available = part_count(len(questions))
+    if part > available:
+        raise QuizStateError(
+            f"У этой темы {available} "
+            f"{'часть' if available == 1 else 'частей'}"
+        )
+    return questions[part_slice(part)]
 
 
 def _shuffled(questions: list[Question]) -> list[Question]:

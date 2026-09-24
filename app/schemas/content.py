@@ -44,6 +44,8 @@ class TopicBrief(BaseModel):
     number: int
     title: str
     question_count: int
+    #: How many parts the topic is offered in. 1 means it is run in one go.
+    part_count: int = 1
     best_percent: int | None = None
 
 

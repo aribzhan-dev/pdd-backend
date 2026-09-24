@@ -49,6 +49,7 @@ async def start_session(
         payload.language,
         payload.topic_id,
         payload.topic_ids,
+        payload.part,
     )
 
 

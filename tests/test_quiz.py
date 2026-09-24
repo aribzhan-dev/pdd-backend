@@ -7,6 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.quiz import MIN_ANSWERS_TO_FINISH
+from app.services.content import TOPIC_PART_SIZE
 from app.services.quiz import CUSTOM_QUESTION_LIMIT
 from tests.conftest import (
     QUESTIONS_PER_TOPIC,
@@ -1017,3 +1018,142 @@ async def test_a_drawn_run_still_fills_up_to_forty(
 
     # Assert
     assert session["total_questions"] == CUSTOM_QUESTION_LIMIT
+
+
+# --- Parts: a long chapter split into sittings ------------------------------
+
+
+async def start_topic_part(
+    client: AsyncClient, headers: dict[str, str], topic_id: int, part: int | None
+) -> dict:
+    """Run a topic, optionally narrowed to one of its parts."""
+    body = {"mode": "topic", "topic_id": topic_id}
+    if part is not None:
+        body["part"] = part
+    response = await client.post(
+        "/api/v1/quiz/sessions", headers=headers, json=body
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def test_the_catalogue_reports_how_many_parts_a_topic_has(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """A topic is split only once it outgrows a single sitting."""
+    # Arrange — 45 questions is one part too many; 10 is comfortably one
+    await create_content(db)
+    await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    response = await client.get("/api/v1/topics", headers=headers)
+
+    # Assert
+    by_number = {topic["number"]: topic for topic in response.json()}
+    assert by_number[1]["question_count"] == QUESTIONS_PER_TOPIC
+    assert by_number[1]["part_count"] == 2
+    assert by_number[2]["part_count"] == 1
+
+
+async def test_a_part_holds_one_sitting_and_the_last_one_the_remainder(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange — 45 questions: 40 in the first part, 5 in the second
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    first = await start_topic_part(client, headers, topic.id, 1)
+    second = await start_topic_part(client, headers, topic.id, 2)
+
+    # Assert
+    assert first["total_questions"] == TOPIC_PART_SIZE
+    assert second["total_questions"] == QUESTIONS_PER_TOPIC - TOPIC_PART_SIZE
+
+
+async def test_the_parts_cover_the_topic_exactly_once(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Working through the parts must cover the chapter, and cover it once.
+
+    An overlap would make a student answer the same question twice; a gap
+    would leave part of the chapter unreachable.
+    """
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    first = await start_topic_part(client, headers, topic.id, 1)
+    second = await start_topic_part(client, headers, topic.id, 2)
+    whole = await start_topic_part(client, headers, topic.id, None)
+
+    # Assert
+    ids_first = {q["id"] for q in first["questions"]}
+    ids_second = {q["id"] for q in second["questions"]}
+    assert not ids_first & ids_second
+    assert ids_first | ids_second == {q["id"] for q in whole["questions"]}
+
+
+async def test_a_part_holds_the_same_questions_every_time(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The slice is cut from the authored order, not from the shuffle.
+
+    Questions inside a run are shuffled, but which questions belong to part
+    two must not move — otherwise a student could never work through a chapter
+    part by part and know they had seen all of it.
+    """
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    first = await start_topic_part(client, headers, topic.id, 2)
+    again = await start_topic_part(client, headers, topic.id, 2)
+
+    # Assert
+    assert {q["id"] for q in first["questions"]} == {
+        q["id"] for q in again["questions"]
+    }
+
+
+async def test_asking_for_a_part_the_topic_does_not_have_is_refused(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange — 45 questions make two parts, so there is no third
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        headers=headers,
+        json={"mode": "topic", "topic_id": topic.id, "part": 3},
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert "2" in response.json()["error"]
+
+
+async def test_a_topic_asked_for_whole_is_still_served_whole(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Leaving the part out keeps the behaviour clients had before parts."""
+    # Arrange
+    topic = await create_content(db)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+
+    # Act
+    session = await start_topic_part(client, headers, topic.id, None)
+
+    # Assert
+    assert session["total_questions"] == QUESTIONS_PER_TOPIC

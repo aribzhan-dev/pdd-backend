@@ -24,11 +24,15 @@ class QuizStartRequest(BaseModel):
     """Begin a run.
 
     `topic_id` is required in TOPIC mode, `topic_ids` in CUSTOM mode; every
-    other mode ignores both.
+    other mode ignores both. `part` narrows a TOPIC run to one stretch of a
+    long chapter.
     """
 
     mode: QuizMode
     topic_id: int | None = None
+    #: Which part of a long topic to run, 1-based. None means the whole topic,
+    #: which is all a topic short enough to be undivided ever offers.
+    part: int | None = Field(default=None, ge=1)
     #: Topics the student ticked for a CUSTOM run.
     topic_ids: list[int] = Field(
         default_factory=list, max_length=MAX_CUSTOM_TOPICS
