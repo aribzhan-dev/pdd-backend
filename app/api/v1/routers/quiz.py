@@ -43,14 +43,7 @@ async def start_session(
     payload: QuizStartRequest, student: StudentDep, session: DbSession
 ) -> SessionRead:
     """Start a topic run, a self-chosen set, an exam or a mistakes pass."""
-    return await QuizService(session).start(
-        student.id,
-        payload.mode,
-        payload.language,
-        payload.topic_id,
-        payload.topic_ids,
-        payload.part,
-    )
+    return await QuizService(session).start(student.id, payload)
 
 
 @router.get("/sessions/{session_id}", response_model=SessionRead)

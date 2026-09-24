@@ -1290,3 +1290,138 @@ async def test_a_part_run_says_which_part_it_is(
     # Assert
     assert session["title"].endswith("· 2/2")
     assert resumed.json()["title"] == session["title"]
+
+
+# --- Retaking the mistakes of one sitting -----------------------------------
+
+
+async def test_a_finished_run_can_be_retaken_over_its_mistakes(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The retry holds exactly the questions that sitting got wrong."""
+    # Arrange — three answered wrongly, one right, the rest left alone
+    topic = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_topic_part(client, headers, topic.id, None)
+    for position in range(4):
+        await answer_at(client, headers, session, position, correct=position == 3)
+    finished = await client.post(
+        f"/api/v1/quiz/sessions/{session['id']}/finish", headers=headers
+    )
+    assert finished.status_code == 200, finished.text
+
+    # Act
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        headers=headers,
+        json={"mode": "mistakes", "from_session_id": session["id"]},
+    )
+
+    # Assert — the three wrong answers plus the six never reached
+    assert response.status_code == 201, response.text
+    retry = response.json()
+    expected = {
+        question["id"]
+        for index, question in enumerate(session["questions"])
+        if index != 3
+    }
+    assert {q["id"] for q in retry["questions"]} == expected
+
+
+async def test_retaking_a_flawless_run_is_refused(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange — every question answered correctly
+    topic = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_topic_part(client, headers, topic.id, None)
+    await finish_all_correct(client, headers, session)
+
+    # Act
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        headers=headers,
+        json={"mode": "mistakes", "from_session_id": session["id"]},
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["error"] == "В этом тесте нет ошибок"
+
+
+async def test_a_run_still_in_progress_cannot_be_retaken(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Its mistakes are not settled yet — an exam has not even revealed them."""
+    # Arrange
+    topic = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_topic_part(client, headers, topic.id, None)
+    await answer_at(client, headers, session, 0, correct=False)
+
+    # Act
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        headers=headers,
+        json={"mode": "mistakes", "from_session_id": session["id"]},
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["error"] == "Сначала завершите тест"
+
+
+async def test_one_student_cannot_retake_another_students_mistakes(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    # Arrange — a finished run belonging to someone else
+    topic = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    owner_headers = await sign_in(client, STUDENT_IIN)
+    session = await start_topic_part(client, owner_headers, topic.id, None)
+    await answer_at(client, owner_headers, session, 0, correct=False)
+    await client.post(
+        f"/api/v1/quiz/sessions/{session['id']}/finish", headers=owner_headers
+    )
+
+    other_iin = "060422501512"
+    await create_student(db, other_iin)
+    other_headers = await sign_in(client, other_iin)
+
+    # Act
+    response = await client.post(
+        "/api/v1/quiz/sessions",
+        headers=other_headers,
+        json={"mode": "mistakes", "from_session_id": session["id"]},
+    )
+
+    # Assert
+    assert response.status_code == 404
+
+
+async def test_the_mistakes_mode_without_a_session_still_draws_on_everything(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Omitting the session keeps the catalogue's own mistakes mode intact."""
+    # Arrange
+    topic = await create_extra_topic(db, number=2, question_count=10)
+    await create_student(db, STUDENT_IIN)
+    headers = await sign_in(client, STUDENT_IIN)
+    session = await start_topic_part(client, headers, topic.id, None)
+    await answer_at(client, headers, session, 0, correct=False)
+    await answer_at(client, headers, session, 1, correct=False)
+    await client.post(
+        f"/api/v1/quiz/sessions/{session['id']}/finish", headers=headers
+    )
+
+    # Act
+    response = await client.post(
+        "/api/v1/quiz/sessions", headers=headers, json={"mode": "mistakes"}
+    )
+
+    # Assert — only the two actually answered wrongly are recorded as mistakes
+    assert response.status_code == 201, response.text
+    assert response.json()["total_questions"] == 2

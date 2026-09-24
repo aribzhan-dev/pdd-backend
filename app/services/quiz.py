@@ -30,6 +30,7 @@ from app.schemas.quiz import (
     AnswerResult,
     ItemState,
     QuestionReview,
+    QuizStartRequest,
     ResultBrief,
     SessionRead,
     SessionResult,
@@ -97,23 +98,14 @@ class QuizService:
             await self._owned_session(user_id, session_id), language
         )
 
-    async def start(
-        self,
-        user_id: int,
-        mode: QuizMode,
-        language: Language,
-        topic_id: int | None,
-        topic_ids: list[int] | None = None,
-        part: int | None = None,
-    ) -> SessionRead:
+    async def start(self, user_id: int, request: QuizStartRequest) -> SessionRead:
         """Begin a run, replacing any session still open.
 
         Only one session is active at a time: starting a new one abandons the
         previous one rather than leaving two resumable runs behind.
         """
-        questions = await self._pick_questions(
-            user_id, mode, topic_id, topic_ids or [], part
-        )
+        mode = request.mode
+        questions = await self._pick_questions(user_id, request)
         if not questions:
             raise QuizStateError("Для этого режима нет доступных вопросов")
 
@@ -121,10 +113,10 @@ class QuizService:
 
         session = QuizSession(
             user_id=user_id,
-            topic_id=topic_id if mode is QuizMode.TOPIC else None,
-            topic_part=part if mode is QuizMode.TOPIC else None,
+            topic_id=request.topic_id if mode is QuizMode.TOPIC else None,
+            topic_part=request.part if mode is QuizMode.TOPIC else None,
             mode=mode,
-            language=language,
+            language=request.language,
             status=QuizStatus.IN_PROGRESS,
             started_at=utc_now(),
             time_limit_seconds=(
@@ -142,33 +134,53 @@ class QuizService:
         return await self._read(restored)
 
     async def _pick_questions(
-        self,
-        user_id: int,
-        mode: QuizMode,
-        topic_id: int | None,
-        topic_ids: list[int],
-        part: int | None = None,
+        self, user_id: int, request: QuizStartRequest
     ) -> list[Question]:
         """Choose the question set for the requested mode."""
+        mode = request.mode
+
         if mode is QuizMode.TOPIC:
-            if topic_id is None:
+            if request.topic_id is None:
                 raise QuizStateError("Для режима темы нужно указать тему")
-            questions = await self.content.list_questions_by_topic(topic_id)
-            questions = _take_part(questions, part)
+            questions = await self.content.list_questions_by_topic(
+                request.topic_id
+            )
+            questions = _take_part(questions, request.part)
             # The catalogue lists a topic in its authored order; running it is
             # a test, so the order is drawn fresh for every attempt.
             return _shuffled(questions)
 
         if mode is QuizMode.CUSTOM:
-            if not topic_ids:
+            if not request.topic_ids:
                 raise QuizStateError("Выберите хотя бы одну тему")
-            return await self._draw(CUSTOM_QUESTION_LIMIT, topic_ids=topic_ids)
+            return await self._draw(
+                CUSTOM_QUESTION_LIMIT, topic_ids=request.topic_ids
+            )
 
         if mode in RANDOM_MODES:
             return await self._draw(EXAM_QUESTION_COUNT)
 
+        if request.from_session_id is not None:
+            return await self._mistakes_of(user_id, request.from_session_id)
+
         mistake_ids = await self.quiz.list_mistake_question_ids(user_id)
         return _shuffled(await self.content.get_questions(mistake_ids))
+
+    async def _mistakes_of(self, user_id: int, session_id: int) -> list[Question]:
+        """The questions one finished run got wrong, ready to run again.
+
+        Unanswered slots come too: the result screen counts them among the
+        mistakes because that is how they score, and a retry that quietly
+        skipped them would not match the number the student was shown.
+        """
+        source = await self._owned_session(user_id, session_id)
+        if source.status is not QuizStatus.FINISHED:
+            raise QuizStateError("Сначала завершите тест")
+
+        wrong = [item.question_id for item in source.items if not item.is_correct]
+        if not wrong:
+            raise QuizStateError("В этом тесте нет ошибок")
+        return _shuffled(await self.content.get_questions(wrong))
 
     async def _draw(
         self, limit: int, topic_ids: list[int] | None = None

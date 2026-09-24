@@ -25,7 +25,8 @@ class QuizStartRequest(BaseModel):
 
     `topic_id` is required in TOPIC mode, `topic_ids` in CUSTOM mode; every
     other mode ignores both. `part` narrows a TOPIC run to one stretch of a
-    long chapter.
+    long chapter, and `from_session_id` narrows a MISTAKES run to the slips of
+    one sitting.
     """
 
     mode: QuizMode
@@ -37,6 +38,9 @@ class QuizStartRequest(BaseModel):
     topic_ids: list[int] = Field(
         default_factory=list, max_length=MAX_CUSTOM_TOPICS
     )
+    #: A finished run to take the mistakes of, in MISTAKES mode. Without it
+    #: the mode draws on everything the student is currently getting wrong.
+    from_session_id: int | None = None
     language: Language = Language.RU
 
     @field_validator("topic_ids")
